@@ -4,7 +4,7 @@ Last updated: 2026-10-03
 
 ## Goal
 
-Given my hand and what's on the discard pile (plus whatever I know about the other players), tell me which card to play, or whether to draw, and briefly why.
+Given my hand, the discard pile, and whatever I know about the other players, all entered on my phone at the table, tell me which card to play, or whether to draw, and briefly why.
 
 ## Defaults chosen
 
@@ -12,11 +12,14 @@ These were picked where nothing was specified. Each one is easy to change.
 
 | Decision | Default | Why |
 |---|---|---|
-| Language | Python 3.12, managed with `uv` | Fast to iterate on, good for simulation and tests. The system pyenv Python is 3.9, so `uv` supplies 3.12 per-project without touching it. |
-| Interface | CLI first (`uno-calc`), web UI later as an option | Smallest useful thing. The engine is a pure library, so a UI can sit on top later. |
+| Language | TypeScript (strict) | One language for engine and UI; types catch rule-modeling mistakes. |
+| Interface | Static web app, mobile-first, usable at the table on a phone | Tap cards instead of typing. No server: everything runs in the browser. |
+| Framework | Vite + React | Fast dev loop, simple static build. |
+| Hosting | Static host (GitHub Pages or Vercel); installable as a PWA so it works offline | No backend to run or pay for. |
 | Ruleset | Official Mattel rules, with house rules as toggles | One well-defined baseline; stacking and other house rules opt in. |
 | Players | 2 to 10, default 4 | Matches the standard game. |
-| Deps | Standard library for the engine; `pytest`, `ruff`, `mypy` for dev | Keeps the core portable. |
+| Deps | Engine has zero runtime deps; Vitest, fast-check, ESLint, Prettier, Playwright for dev | Engine stays portable and testable outside the browser. |
+| Runtime | Node 24 / npm 11 (already installed) for dev and build | Matches the local machine. |
 
 ## 1. Rules modeled
 
@@ -67,13 +70,15 @@ Short, case-insensitive tokens:
 
 Colors: `R Y G B`. Long forms (`red-5`, `blue-skip`, `wild-draw-four`) are also accepted.
 
-### Quick CLI form
-```bash
-uno-calc --hand "R5 R+2 G7 W YS" --top R3
-uno-calc --hand "R5 G7 W" --top W --color G --pending-draw 2
-```
+### Main UI (phone)
+- **My hand:** a card picker grid (4 colors x 0-9/S/R/+2, plus W and W+4). Tap to add, tap a hand card to remove. Typing tokens is also supported (`R5 R+2 W`) for speed.
+- **Top of pile:** pick the top card; if it's a wild, pick the active color.
+- **Table:** number of players, each opponent's card count (+/- buttons), direction, pending draw penalty.
+- **Live-game mode (later):** log each play as it happens so the discard history, card counts, and "drew on color X" hints fill in automatically.
+- **Rules panel:** house-rule toggles, persisted in `localStorage`.
 
-### Full state (JSON or YAML file, `uno-calc --state game.json`)
+### Game state (JSON)
+The UI builds this object; it can also be exported/imported or encoded in the URL to share a position.
 ```json
 {
   "rules": { "stack_draw2": true, "stack_draw4": false },
@@ -95,7 +100,7 @@ uno-calc --hand "R5 G7 W" --top W --color G --pending-draw 2
 - Missing fields fall back to sensible defaults (4 players, 7 cards each, no pending draw).
 
 ### Output
-A ranked list with a short reason for each, for example:
+A ranked list shown as cards, best highlighted, each with a short reason, for example:
 ```
 1. R+2      score 8.4  next player has 2 cards; makes them draw and skip
 2. W -> R   score 5.1  works, but spends your only wild
@@ -130,38 +135,47 @@ Weights live in one config so they can be tuned.
 ## 4. Architecture
 
 ```
-src/uno_calc/
-  cards.py      Card, Color, Kind; parsing and formatting of tokens
-  rules.py      RuleSet toggles; legal_moves(state); apply(state, move)
-  state.py      GameState, PlayerView; JSON/YAML loading
-  heuristics.py weighted scoring of moves
-  tracker.py    unseen-card counting, opponent color inference
-  search.py     Monte Carlo / expectimax (phase 2)
-  cli.py        argparse entry point, pretty output
+src/
+  engine/            pure TypeScript, no DOM or React imports
+    cards.ts         Card, Color, Kind; token parse/format; deck builder
+    rules.ts         RuleSet toggles; legalMoves(state); apply(state, move)
+    state.ts         GameState, PlayerView; JSON (de)serialization
+    heuristics.ts    weighted scoring of moves
+    tracker.ts       unseen-card counting, opponent color inference
+    search.ts        Monte Carlo / expectimax (phase 2)
+    sim.ts           self-play simulator + bot policies
+  worker/
+    search.worker.ts runs search off the main thread (Web Worker)
+  ui/                React components: CardPicker, Hand, Table, Results, RulesPanel
+  main.tsx
+scripts/
+  bench.ts           self-play benchmarks, run with Node (`npm run bench`)
 tests/
 ```
-The engine is pure functions over immutable state, so the CLI, a future web UI, and the simulator all share it.
+The engine is pure functions over immutable state, so the UI, the Web Worker, and Node benchmark scripts all share it. Search runs in a Web Worker with a time budget (e.g. 300 ms) so the page never freezes.
 
 ## 5. Milestones
 
-1. **Scaffold:** `uv` project, `pyproject.toml`, ruff, mypy, pytest, CI-free local `make check`.
+1. **Scaffold:** Vite + React + TypeScript (strict), ESLint, Prettier, Vitest; `npm run check` runs lint, typecheck, tests.
 2. **Cards and parsing:** card model, token parser with good error messages, deck builder.
 3. **Rules engine:** legal moves and move application for the baseline rules, then each house-rule toggle.
-4. **Heuristic recommender + CLI:** ranked moves with reasons; quick and full-state input.
-5. **Card tracker:** unseen-card counting and opponent color inference feeding the heuristics.
-6. **Simulator:** full-game self-play with pluggable policies (random, greedy, heuristic).
-7. **Monte Carlo / expectimax search:** benchmark against heuristics via the simulator.
-8. **Polish:** interactive mode that tracks a live game turn by turn; optional web UI.
+4. **Heuristic recommender:** ranked moves with reasons, tested from scenarios.
+5. **Mobile UI v1:** card picker, top card, opponent counts, rules panel, results. Deploy to a static host.
+6. **Card tracker + live-game mode:** log plays turn by turn; tracker feeds the heuristics.
+7. **Simulator + benchmarks:** self-play in Node with pluggable bots (random, greedy, heuristic).
+8. **Monte Carlo / expectimax search** in a Web Worker; benchmark against heuristics.
+9. **Polish:** PWA/offline, shareable position URLs, dark mode.
 
 ## 6. Testing
 
-- **Unit tests (pytest):** parser round-trips and invalid-token errors; deck composition (108 cards, correct counts); legal-move tables for each card type and each rule toggle; Wild Draw Four legality; stacking accumulation.
+- **Unit tests (Vitest):** parser round-trips and invalid-token errors; deck composition (108 cards, correct counts); legal-move tables for each card type and each rule toggle; Wild Draw Four legality; stacking accumulation.
 - **Scenario tests:** hand-written positions with a known best move (e.g. next player on 1 card and I hold a Draw Two), kept in `tests/scenarios/*.json` so new cases are cheap to add.
-- **Property tests (hypothesis):** card conservation (cards are never created or lost), every recommended move is legal, simulated games always terminate.
-- **Strength benchmarks:** win rate of each policy over N thousand self-play games against baseline bots; tracked over time so changes don't regress strength.
-- **Static checks:** ruff and mypy in `make check`.
+- **Property tests (fast-check):** card conservation (cards are never created or lost), every recommended move is legal, simulated games always terminate.
+- **Component tests (Vitest + Testing Library):** picker adds/removes cards, results update when state changes.
+- **End-to-end (Playwright, phone viewport):** enter a hand and top card, see the expected top recommendation.
+- **Strength benchmarks:** win rate of each policy over thousands of self-play games (`npm run bench`); tracked over time so changes don't regress strength.
 
 ## Open questions
 
 - Which house rules do you actually play with? Stacking defaults to off until confirmed.
-- Is a CLI fine for v1, or do you want to use this at the table on a phone (which would push the web UI earlier)?
+- Where to host: GitHub Pages (needs a GitHub repo) or Vercel? Defaults to GitHub Pages.

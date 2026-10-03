@@ -19,3 +19,15 @@ htmlcov/
 .idea/
 .DS_Store
 *.swp
+
+# Node / web
+node_modules/
+dist/
+coverage/
+playwright-report/
+test-results/
+*.local
+.env
+.env.*
+!.env.example
+npm-debug.log*
