@@ -22,4 +22,6 @@ npm run bench -- mc 2 1500 1000   # strategy, players, games, playouts
 
 Engine code lives in `src/engine` (no DOM or React imports); the UI is in `src/ui`.
 
+Live at https://impka.github.io/uno-calculator/ (deployed from `main` by GitHub Actions).
+
 Status: milestone 1 (official rules, no house rules yet).
