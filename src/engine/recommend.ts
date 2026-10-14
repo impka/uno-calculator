@@ -9,7 +9,7 @@ import {
   points,
   rankOf,
 } from "./cards";
-import { type Move, type Position, legalMoves } from "./rules";
+import { type Move, type Position, formatMove, legalMoves } from "./rules";
 import { type MoveEval, type SearchOptions, monteCarlo } from "./search";
 import { colorCounts, longestColor } from "./sim";
 
@@ -18,6 +18,8 @@ export interface Recommendation {
   /** Simulated win chance after this move, 0-1. */
   winRate: number;
   playouts: number;
+  /** Within simulation noise of the top pick, so the longest-color rule ordered it. */
+  tied: boolean;
   /** Short plain-language notes on why the move is good or bad. */
   reasons: string[];
 }
@@ -112,10 +114,17 @@ export function recommend(pos: Position, opts: SearchOptions = {}): Recommendati
   const band = sorted.filter((e) => best.winRate - e.winRate <= se);
   band.sort((a, b) => heuristicScore(pos, b.move) - heuristicScore(pos, a.move));
   sorted.splice(0, band.length, ...band);
-  return sorted.map((e) => ({
+  const tied = new Set(band.length > 1 ? band : []);
+  const recs = sorted.map((e) => ({
     move: e.move,
     winRate: e.winRate,
     playouts: e.playouts,
+    tied: tied.has(e),
     reasons: explain(pos, e.move),
   }));
+  if (band.length > 1) {
+    const others = band.slice(1).map((e) => formatMove(e.move)).join(", ");
+    recs[0]!.reasons.push(`Too close to call against ${others}; picked by the longest-color rule.`);
+  }
+  return recs;
 }
